@@ -21,7 +21,7 @@ func generateLineItems(vals []Metrics) []opts.LineData {
 	return items
 }
 
-func generateChart(bucket map[int]Metrics) http.HandlerFunc {
+func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 	keys := make([]int, 0, len(bucket))
 	for k := range bucket {
 		keys = append(keys, k)
@@ -39,6 +39,13 @@ func generateChart(bucket map[int]Metrics) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, _ *http.Request) {
 		line := charts.NewLine()
+		if len(title) > 0 {
+			line.SetGlobalOptions(
+				charts.WithTitleOpts(opts.Title{
+					Title: title,
+				}),
+			)
+		}
 		line.SetGlobalOptions(
 			charts.WithXAxisOpts(opts.XAxis{
 				Name: "Time (s)",
