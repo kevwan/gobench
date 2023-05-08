@@ -9,18 +9,6 @@ import (
 	"github.com/go-echarts/go-echarts/v2/opts"
 )
 
-func generateLineItems(vals []Metrics) []opts.LineData {
-	items := make([]opts.LineData, 0, len(vals))
-
-	for _, v := range vals {
-		items = append(items, opts.LineData{
-			Value: int(v.P99 / time.Microsecond),
-		})
-	}
-
-	return items
-}
-
 func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 	keys := make([]int, 0, len(bucket))
 	for k := range bucket {
