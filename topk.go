@@ -53,32 +53,51 @@ func topK(all []Task, k int) []Task {
 	return *h
 }
 
-func calculate(bucket taskHeap) Metrics {
+func calculate(bucket []Task) Metrics {
 	var metrics Metrics
-	size := bucket.Len()
+	size := len(bucket)
 	if size == 0 {
 		return metrics
 	}
+
+	var total time.Duration
+	for _, each := range bucket {
+		total += each.Duration
+	}
+	metrics.Average = total / time.Duration(size)
 
 	fiftyPercent := size >> 1
 	if fiftyPercent > 0 {
 		top50pTasks := topK(bucket, fiftyPercent)
 		medianTask := top50pTasks[0]
-		metrics.Median = medianTask.Duration
-		onePercent := fiftyPercent / 50
-		if onePercent > 0 {
-			top1pTasks := topK(top50pTasks, onePercent)
-			task99th := top1pTasks[0]
-			metrics.P99 = task99th.Duration
+		metrics.P50 = medianTask.Duration
+		tenPercent := fiftyPercent / 5
+		if tenPercent > 0 {
+			top10pTasks := topK(top50pTasks, tenPercent)
+			task90th := top10pTasks[0]
+			metrics.P90 = task90th.Duration
+			onePercent := tenPercent / 10
+			if onePercent > 0 {
+				top1pTasks := topK(top10pTasks, onePercent)
+				task99th := top1pTasks[0]
+				metrics.P99 = task99th.Duration
+			} else {
+				mostDuration := getTopDuration(top50pTasks)
+				metrics.P99 = mostDuration
+			}
 		} else {
 			mostDuration := getTopDuration(top50pTasks)
+			metrics.P90 = mostDuration
 			metrics.P99 = mostDuration
 		}
 	} else {
 		mostDuration := getTopDuration(bucket)
-		metrics.Median = mostDuration
+		metrics.P50 = mostDuration
+		metrics.P90 = mostDuration
 		metrics.P99 = mostDuration
 	}
+
+	metrics.Qps = size
 
 	return metrics
 }

@@ -22,15 +22,20 @@ const (
 
 type (
 	Metrics struct {
-		Median time.Duration
-		P99    time.Duration
+		Average time.Duration
+		P50     time.Duration
+		P90     time.Duration
+		P99     time.Duration
+		Qps     int
+		Cpu     float64
+		Memory  float64
 	}
 
 	Bench struct {
 		records   map[int]Metrics
 		startTime time.Duration
 		current   time.Duration
-		bucket    taskHeap
+		bucket    []Task
 		title     string
 		host      string
 		port      int
@@ -65,23 +70,8 @@ func NewBenchWithConfig(cfg Config) *Bench {
 func (b *Bench) Run(qps int, fn func()) {
 	fmt.Println("Ctrl+C to show the benchmark chart")
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	b.runLoop(time.Second/time.Duration(qps), fn)
 
-	ticket := time.NewTicker(time.Second / time.Duration(qps))
-	defer ticket.Stop()
-
-	for {
-		select {
-		case <-ticket.C:
-			b.runSingle(fn)
-		case <-c:
-			signal.Stop(c)
-			goto chart
-		}
-	}
-
-chart:
 	listener, err := net.Listen("tcp", b.buildAddr())
 	if err != nil {
 		fmt.Println(err)
@@ -112,20 +102,45 @@ func (b *Bench) buildAddr() string {
 	return fmt.Sprintf("%s:%d", host, b.port)
 }
 
+func (b *Bench) runLoop(interval time.Duration, fn func()) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
+	ticket := time.NewTicker(interval)
+	defer ticket.Stop()
+
+	for {
+		select {
+		case <-ticket.C:
+			b.runSingle(fn)
+		case <-c:
+			signal.Stop(c)
+			return
+		}
+	}
+}
+
 func (b *Bench) runSingle(fn func()) {
 	start := timex.Now()
 	fn()
 	elapsed := timex.Since(start)
 
 	if timex.Since(b.current) > time.Second {
-		metrics := calculate(b.bucket)
+		bucket := b.bucket
+		b.bucket = nil
 		index := int((b.current - b.startTime) / time.Second)
-		b.records[index] = metrics
 		b.current = start
-		b.bucket = taskHeap{}
+		b.bucket = b.bucket[:0]
+
+		go func() {
+			metrics := calculate(bucket)
+			metrics.Cpu = getCpuUsage()
+			metrics.Memory = getMemoryUsage()
+			b.records[index] = metrics
+		}()
 	}
 
-	b.bucket.Push(Task{
+	b.bucket = append(b.bucket, Task{
 		Duration: elapsed,
 	})
 }

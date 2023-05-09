@@ -14,7 +14,7 @@ func main() {
 		Port:  8282,
 	})
 	b.Run(10000, func() {
-		n := rand.Intn(100)
+		n := rand.Intn(10)
 		time.Sleep(time.Millisecond * time.Duration(n))
 	})
 }
