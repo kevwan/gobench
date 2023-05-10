@@ -2,6 +2,7 @@ package gobench
 
 import (
 	"container/heap"
+	"fmt"
 	"time"
 )
 
@@ -65,6 +66,7 @@ func calculate(bucket []Task) Metrics {
 	for _, each := range bucket {
 		total += each.duration
 	}
+	fmt.Printf("total: %v, size: %d, top: %s\n", total, size, getTopDuration(bucket))
 	metrics.Average = total / time.Duration(size)
 
 	fiftyPercent := size >> 1
@@ -82,20 +84,32 @@ func calculate(bucket []Task) Metrics {
 				top1pTasks := topK(top10pTasks, onePercent)
 				task99th := top1pTasks[0]
 				metrics.P99 = task99th.duration
+				pointOnePercent := onePercent / 10
+				if pointOnePercent > 0 {
+					top01pTasks := topK(top1pTasks, pointOnePercent)
+					task999th := top01pTasks[0]
+					metrics.P999 = task999th.duration
+				} else {
+					mostDuration := getTopDuration(top1pTasks)
+					metrics.P999 = mostDuration
+				}
 			} else {
 				mostDuration := getTopDuration(top50pTasks)
 				metrics.P99 = mostDuration
+				metrics.P999 = mostDuration
 			}
 		} else {
 			mostDuration := getTopDuration(top50pTasks)
 			metrics.P90 = mostDuration
 			metrics.P99 = mostDuration
+			metrics.P999 = mostDuration
 		}
 	} else {
 		mostDuration := getTopDuration(bucket)
 		metrics.P50 = mostDuration
 		metrics.P90 = mostDuration
 		metrics.P99 = mostDuration
+		metrics.P999 = mostDuration
 	}
 
 	metrics.Qps = size

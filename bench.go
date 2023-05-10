@@ -28,6 +28,7 @@ type (
 		P50     time.Duration
 		P90     time.Duration
 		P99     time.Duration
+		P999    time.Duration
 		Qps     int
 		Cpu     float64
 		Memory  float64
@@ -42,6 +43,7 @@ type (
 		host      string
 		port      int
 		lock      sync.Mutex
+		quit      chan struct{}
 	}
 
 	Config struct {
@@ -56,6 +58,7 @@ func NewBench() *Bench {
 		records:   make(map[int]Metrics),
 		startTime: timex.Now(),
 		current:   timex.Now(),
+		quit:      make(chan struct{}),
 	}
 }
 
@@ -67,6 +70,7 @@ func NewBenchWithConfig(cfg Config) *Bench {
 		title:     cfg.Title,
 		host:      cfg.Host,
 		port:      cfg.Port,
+		quit:      make(chan struct{}),
 	}
 }
 
@@ -99,35 +103,48 @@ func (b *Bench) Run(qps int, fn func()) {
 func (b *Bench) analyze() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	defer fmt.Println()
 
+	var seconds int
 	// discard last second before stop, so we can get a more accurate result
 	// because the last second may not be a complete second
-	for range ticker.C {
-		var bucket []Task
-
-		b.lock.Lock()
-		index := int((b.current - b.startTime) / time.Second)
-		b.current = timex.Now()
-		for i, task := range b.bucket {
-			if timex.Since(task.start) < time.Second {
-				bucket = b.bucket[:i]
-				b.bucket = b.bucket[i:]
-				break
+	for {
+		select {
+		case <-b.quit:
+			return
+		case <-ticker.C:
+			if seconds%60 == 0 {
+				fmt.Printf("\n%2dm ", seconds/60)
 			}
+			fmt.Print(".")
+			seconds++
+
+			var bucket []Task
+
+			b.lock.Lock()
+			index := int((b.current - b.startTime) / time.Second)
+			b.current = timex.Now()
+			for i, task := range b.bucket {
+				if timex.Since(task.start) < time.Second {
+					bucket = b.bucket[:i]
+					b.bucket = b.bucket[i:]
+					break
+				}
+			}
+			b.lock.Unlock()
+
+			if len(bucket) == 0 {
+				continue
+			}
+
+			metrics := calculate(bucket)
+			metrics.Cpu = getCpuUsage()
+			metrics.Memory = getMemoryUsage()
+
+			b.lock.Lock()
+			b.records[index] = metrics
+			b.lock.Unlock()
 		}
-		b.lock.Unlock()
-
-		if len(bucket) == 0 {
-			continue
-		}
-
-		metrics := calculate(bucket)
-		metrics.Cpu = getCpuUsage()
-		metrics.Memory = getMemoryUsage()
-
-		b.lock.Lock()
-		b.records[index] = metrics
-		b.lock.Unlock()
 	}
 }
 
@@ -141,10 +158,15 @@ func (b *Bench) buildAddr() string {
 }
 
 func (b *Bench) collect(collector <-chan Task) {
-	for task := range collector {
-		b.lock.Lock()
-		b.bucket = append(b.bucket, task)
-		b.lock.Unlock()
+	for {
+		select {
+		case <-b.quit:
+			return
+		case task := <-collector:
+			b.lock.Lock()
+			b.bucket = append(b.bucket, task)
+			b.lock.Unlock()
+		}
 	}
 }
 
@@ -155,23 +177,29 @@ func (b *Bench) runLoop(interval time.Duration, fn func()) {
 	channel := make(chan struct{}, 1)
 	collector := make(chan Task, 1)
 	group := threading.NewWorkerGroup(func() {
-		for range channel {
-			b.runSingle(collector, fn)
+		for {
+			select {
+			case <-b.quit:
+				return
+			case <-channel:
+				b.runSingle(collector, fn)
+			}
 		}
 	}, runtime.NumCPU())
 	go group.Start()
 	go b.collect(collector)
 	go b.analyze()
 
-	ticket := time.NewTicker(interval)
-	defer ticket.Stop()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ticket.C:
+		case <-ticker.C:
 			channel <- struct{}{}
 		case <-c:
 			signal.Stop(c)
+			close(b.quit)
 			return
 		}
 	}
@@ -180,9 +208,10 @@ func (b *Bench) runLoop(interval time.Duration, fn func()) {
 func (b *Bench) runSingle(collector chan<- Task, fn func()) {
 	start := timex.Now()
 	fn()
+	duration := timex.Since(start)
 	collector <- Task{
 		start:    start,
-		duration: timex.Since(start),
+		duration: duration,
 	}
 }
 
