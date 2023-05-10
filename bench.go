@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/cmdline"
+	"github.com/zeromicro/go-zero/core/threading"
 	"github.com/zeromicro/go-zero/core/timex"
 )
 
@@ -39,6 +41,7 @@ type (
 		title     string
 		host      string
 		port      int
+		lock      sync.Mutex
 	}
 
 	Config struct {
@@ -68,7 +71,7 @@ func NewBenchWithConfig(cfg Config) *Bench {
 }
 
 func (b *Bench) Run(qps int, fn func()) {
-	fmt.Println("Ctrl+C to show the benchmark chart")
+	fmt.Println("Ctrl+C to show the benchmark charts")
 
 	b.runLoop(time.Second/time.Duration(qps), fn)
 
@@ -93,6 +96,41 @@ func (b *Bench) Run(qps int, fn func()) {
 	cmdline.EnterToContinue()
 }
 
+func (b *Bench) analyze() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	// discard last second before stop, so we can get a more accurate result
+	// because the last second may not be a complete second
+	for range ticker.C {
+		var bucket []Task
+
+		b.lock.Lock()
+		index := int((b.current - b.startTime) / time.Second)
+		b.current = timex.Now()
+		for i, task := range b.bucket {
+			if timex.Since(task.start) < time.Second {
+				bucket = b.bucket[:i]
+				b.bucket = b.bucket[i:]
+				break
+			}
+		}
+		b.lock.Unlock()
+
+		if len(bucket) == 0 {
+			continue
+		}
+
+		metrics := calculate(bucket)
+		metrics.Cpu = getCpuUsage()
+		metrics.Memory = getMemoryUsage()
+
+		b.lock.Lock()
+		b.records[index] = metrics
+		b.lock.Unlock()
+	}
+}
+
 func (b *Bench) buildAddr() string {
 	host := b.host
 	if len(host) == 0 {
@@ -102,9 +140,28 @@ func (b *Bench) buildAddr() string {
 	return fmt.Sprintf("%s:%d", host, b.port)
 }
 
+func (b *Bench) collect(collector <-chan Task) {
+	for task := range collector {
+		b.lock.Lock()
+		b.bucket = append(b.bucket, task)
+		b.lock.Unlock()
+	}
+}
+
 func (b *Bench) runLoop(interval time.Duration, fn func()) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
+	channel := make(chan struct{}, 1)
+	collector := make(chan Task, 1)
+	group := threading.NewWorkerGroup(func() {
+		for range channel {
+			b.runSingle(collector, fn)
+		}
+	}, runtime.NumCPU())
+	go group.Start()
+	go b.collect(collector)
+	go b.analyze()
 
 	ticket := time.NewTicker(interval)
 	defer ticket.Stop()
@@ -112,7 +169,7 @@ func (b *Bench) runLoop(interval time.Duration, fn func()) {
 	for {
 		select {
 		case <-ticket.C:
-			b.runSingle(fn)
+			channel <- struct{}{}
 		case <-c:
 			signal.Stop(c)
 			return
@@ -120,29 +177,13 @@ func (b *Bench) runLoop(interval time.Duration, fn func()) {
 	}
 }
 
-func (b *Bench) runSingle(fn func()) {
+func (b *Bench) runSingle(collector chan<- Task, fn func()) {
 	start := timex.Now()
 	fn()
-	elapsed := timex.Since(start)
-
-	if timex.Since(b.current) > time.Second {
-		bucket := b.bucket
-		b.bucket = nil
-		index := int((b.current - b.startTime) / time.Second)
-		b.current = start
-		b.bucket = b.bucket[:0]
-
-		go func() {
-			metrics := calculate(bucket)
-			metrics.Cpu = getCpuUsage()
-			metrics.Memory = getMemoryUsage()
-			b.records[index] = metrics
-		}()
+	collector <- Task{
+		start:    start,
+		duration: timex.Since(start),
 	}
-
-	b.bucket = append(b.bucket, Task{
-		Duration: elapsed,
-	})
 }
 
 func openBrowser(url string) {

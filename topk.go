@@ -7,7 +7,8 @@ import (
 
 type (
 	Task struct {
-		time.Duration
+		start    time.Duration
+		duration time.Duration
 	}
 
 	taskHeap []Task
@@ -18,7 +19,7 @@ func (h *taskHeap) Len() int {
 }
 
 func (h *taskHeap) Less(i, j int) bool {
-	return (*h)[i].Duration < (*h)[j].Duration
+	return (*h)[i].duration < (*h)[j].duration
 }
 
 func (h *taskHeap) Swap(i, j int) {
@@ -44,7 +45,7 @@ func topK(all []Task, k int) []Task {
 	for _, each := range all {
 		if h.Len() < k {
 			heap.Push(h, each)
-		} else if (*h)[0].Duration < each.Duration {
+		} else if (*h)[0].duration < each.duration {
 			heap.Pop(h)
 			heap.Push(h, each)
 		}
@@ -62,7 +63,7 @@ func calculate(bucket []Task) Metrics {
 
 	var total time.Duration
 	for _, each := range bucket {
-		total += each.Duration
+		total += each.duration
 	}
 	metrics.Average = total / time.Duration(size)
 
@@ -70,17 +71,17 @@ func calculate(bucket []Task) Metrics {
 	if fiftyPercent > 0 {
 		top50pTasks := topK(bucket, fiftyPercent)
 		medianTask := top50pTasks[0]
-		metrics.P50 = medianTask.Duration
+		metrics.P50 = medianTask.duration
 		tenPercent := fiftyPercent / 5
 		if tenPercent > 0 {
 			top10pTasks := topK(top50pTasks, tenPercent)
 			task90th := top10pTasks[0]
-			metrics.P90 = task90th.Duration
+			metrics.P90 = task90th.duration
 			onePercent := tenPercent / 10
 			if onePercent > 0 {
 				top1pTasks := topK(top10pTasks, onePercent)
 				task99th := top1pTasks[0]
-				metrics.P99 = task99th.Duration
+				metrics.P99 = task99th.duration
 			} else {
 				mostDuration := getTopDuration(top50pTasks)
 				metrics.P99 = mostDuration
@@ -108,5 +109,5 @@ func getTopDuration(tasks []Task) time.Duration {
 		return 0
 	}
 
-	return top[0].Duration
+	return top[0].duration
 }
