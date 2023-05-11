@@ -28,7 +28,6 @@ type (
 		P50     time.Duration
 		P90     time.Duration
 		P99     time.Duration
-		P999    time.Duration
 		Qps     int
 		Cpu     float64
 		Memory  float64
@@ -42,6 +41,7 @@ type (
 		title     string
 		host      string
 		port      int
+		ticker    *time.Ticker
 		lock      sync.Mutex
 		quit      chan struct{}
 	}
@@ -77,7 +77,10 @@ func NewBenchWithConfig(cfg Config) *Bench {
 func (b *Bench) Run(qps int, fn func()) {
 	fmt.Println("Ctrl+C to show the benchmark charts")
 
-	b.runLoop(time.Second/time.Duration(qps), fn)
+	interval := time.Second / time.Duration(qps)
+	b.ticker = time.NewTicker(interval)
+	b.runLoop(fn)
+	b.ticker.Stop()
 
 	listener, err := net.Listen("tcp", b.buildAddr())
 	if err != nil {
@@ -86,7 +89,7 @@ func (b *Bench) Run(qps int, fn func()) {
 	}
 
 	addr := listener.Addr().String()
-	fmt.Printf("\nListening on: %s\nPress Enter to quit\n", addr)
+	fmt.Printf("\nListening on: %s\n\n", addr)
 
 	go func() {
 		http.HandleFunc(defaultPath, generateChart(b.title, b.records))
@@ -103,7 +106,6 @@ func (b *Bench) Run(qps int, fn func()) {
 func (b *Bench) analyze() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	defer fmt.Println()
 
 	var seconds int
 	// discard last second before stop, so we can get a more accurate result
@@ -170,7 +172,7 @@ func (b *Bench) collect(collector <-chan Task) {
 	}
 }
 
-func (b *Bench) runLoop(interval time.Duration, fn func()) {
+func (b *Bench) runLoop(fn func()) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 
@@ -190,12 +192,9 @@ func (b *Bench) runLoop(interval time.Duration, fn func()) {
 	go b.collect(collector)
 	go b.analyze()
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	for {
 		select {
-		case <-ticker.C:
+		case <-b.ticker.C:
 			channel <- struct{}{}
 		case <-c:
 			signal.Stop(c)

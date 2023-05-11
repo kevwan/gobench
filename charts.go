@@ -33,10 +33,6 @@ func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 	for _, k := range keys {
 		p99Vals = append(p99Vals, opts.LineData{Value: bucket[k].P99 / time.Microsecond})
 	}
-	p999Vals := make([]opts.LineData, 0, len(bucket))
-	for _, k := range keys {
-		p999Vals = append(p999Vals, opts.LineData{Value: bucket[k].P999 / time.Microsecond})
-	}
 
 	respTimeLine := charts.NewLine()
 	if len(title) > 0 {
@@ -59,8 +55,7 @@ func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 		AddSeries("Average", avgVals).
 		AddSeries("P50", p50Vals).
 		AddSeries("P90", p90Vals).
-		AddSeries("P99", p99Vals).
-		AddSeries("P999", p999Vals)
+		AddSeries("P99", p99Vals)
 
 	qpsLine := charts.NewLine()
 	qpsLine.SetGlobalOptions(
