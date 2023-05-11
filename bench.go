@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	defaultHost = "localhost"
-	defaultPath = "/"
+	defaultHost             = "localhost"
+	defaultPath             = "/"
+	minCpusToReserveForCalc = 4
 )
 
 type (
@@ -41,15 +42,17 @@ type (
 		title     string
 		host      string
 		port      int
+		duration  time.Duration
 		ticker    *time.Ticker
 		lock      sync.Mutex
 		quit      chan struct{}
 	}
 
 	Config struct {
-		Host  string
-		Port  int
-		Title string
+		Host     string
+		Port     int
+		Title    string
+		Duration time.Duration
 	}
 )
 
@@ -70,6 +73,7 @@ func NewBenchWithConfig(cfg Config) *Bench {
 		title:     cfg.Title,
 		host:      cfg.Host,
 		port:      cfg.Port,
+		duration:  cfg.Duration,
 		quit:      make(chan struct{}),
 	}
 }
@@ -89,7 +93,7 @@ func (b *Bench) Run(qps int, fn func()) {
 	}
 
 	addr := listener.Addr().String()
-	fmt.Printf("\nListening on: %s\n\n", addr)
+	fmt.Printf("\n\nListening on: %s\n", addr)
 
 	go func() {
 		http.HandleFunc(defaultPath, generateChart(b.title, b.records))
@@ -178,6 +182,11 @@ func (b *Bench) runLoop(fn func()) {
 
 	channel := make(chan struct{}, 1)
 	collector := make(chan Task, 1)
+	numCpus := runtime.NumCPU()
+	if numCpus >= minCpusToReserveForCalc {
+		// keep one cpu for metrics calculation
+		numCpus -= 1
+	}
 	group := threading.NewWorkerGroup(func() {
 		for {
 			select {
@@ -187,18 +196,28 @@ func (b *Bench) runLoop(fn func()) {
 				b.runSingle(collector, fn)
 			}
 		}
-	}, runtime.NumCPU())
+	}, numCpus)
 	go group.Start()
 	go b.collect(collector)
 	go b.analyze()
+
+	stop := func() {
+		signal.Stop(c)
+		close(b.quit)
+	}
+
+	timer := time.NewTimer(b.duration)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-b.ticker.C:
 			channel <- struct{}{}
+		case <-timer.C:
+			stop()
+			return
 		case <-c:
-			signal.Stop(c)
-			close(b.quit)
+			stop()
 			return
 		}
 	}
