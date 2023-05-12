@@ -10,7 +10,7 @@ import (
 	"github.com/go-echarts/go-echarts/v2/opts"
 )
 
-func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
+func generateChart(bucket map[int]metrics, cfg chartConfig) http.HandlerFunc {
 	keys := make([]int, 0, len(bucket))
 	for k := range bucket {
 		keys = append(keys, k)
@@ -35,10 +35,10 @@ func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 	}
 
 	respTimeLine := charts.NewLine()
-	if len(title) > 0 {
+	if len(cfg.title) > 0 {
 		respTimeLine.SetGlobalOptions(
 			charts.WithTitleOpts(opts.Title{
-				Title: title,
+				Title: cfg.title,
 			}),
 		)
 	}
@@ -72,6 +72,24 @@ func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 		qpsVals = append(qpsVals, opts.LineData{Value: bucket[k].Qps})
 	}
 	qpsLine.SetXAxis(keys).AddSeries("QPS", qpsVals)
+
+	var errorLine *charts.Line
+	if cfg.plotErrorRate {
+		errorLine = charts.NewLine()
+		errorLine.SetGlobalOptions(
+			charts.WithXAxisOpts(opts.XAxis{
+				Name: "Time (s)",
+			}),
+			charts.WithYAxisOpts(opts.YAxis{
+				Name: "Error Rate (%)",
+			}),
+		)
+		errorVals := make([]opts.LineData, 0, len(bucket))
+		for _, k := range keys {
+			errorVals = append(errorVals, opts.LineData{Value: bucket[k].ErrorRate})
+		}
+		errorLine.SetXAxis(keys).AddSeries("Error Rate", errorVals)
+	}
 
 	cpuLine := charts.NewLine()
 	cpuLine.SetGlobalOptions(
@@ -112,6 +130,12 @@ func generateChart(title string, bucket map[int]Metrics) http.HandlerFunc {
 
 		if err := qpsLine.Render(w); err != nil {
 			fmt.Println(err)
+		}
+
+		if errorLine != nil {
+			if err := errorLine.Render(w); err != nil {
+				fmt.Println(err)
+			}
 		}
 
 		if err := cpuLine.Render(w); err != nil {

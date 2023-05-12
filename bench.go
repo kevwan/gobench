@@ -24,18 +24,8 @@ const (
 )
 
 type (
-	Metrics struct {
-		Average time.Duration
-		P50     time.Duration
-		P90     time.Duration
-		P99     time.Duration
-		Qps     int
-		Cpu     float64
-		Memory  float64
-	}
-
 	Bench struct {
-		records   map[int]Metrics
+		records   map[int]metrics
 		startTime time.Duration
 		current   time.Duration
 		bucket    []Task
@@ -54,11 +44,27 @@ type (
 		Title    string
 		Duration time.Duration
 	}
+
+	metrics struct {
+		Average   time.Duration
+		P50       time.Duration
+		P90       time.Duration
+		P99       time.Duration
+		Qps       int
+		ErrorRate float64
+		Cpu       float64
+		Memory    float64
+	}
+
+	chartConfig struct {
+		title         string
+		plotErrorRate bool
+	}
 )
 
 func NewBench() *Bench {
 	return &Bench{
-		records:   make(map[int]Metrics),
+		records:   make(map[int]metrics),
 		startTime: timex.Now(),
 		current:   timex.Now(),
 		quit:      make(chan struct{}),
@@ -67,7 +73,7 @@ func NewBench() *Bench {
 
 func NewBenchWithConfig(cfg Config) *Bench {
 	return &Bench{
-		records:   make(map[int]Metrics),
+		records:   make(map[int]metrics),
 		startTime: timex.Now(),
 		current:   timex.Now(),
 		title:     cfg.Title,
@@ -79,6 +85,17 @@ func NewBenchWithConfig(cfg Config) *Bench {
 }
 
 func (b *Bench) Run(qps int, fn func()) {
+	b.doRun(qps, func() error {
+		fn()
+		return nil
+	}, false)
+}
+
+func (b *Bench) RunErr(qps int, fn func() error) {
+	b.doRun(qps, fn, true)
+}
+
+func (b *Bench) doRun(qps int, fn func() error, hasErr bool) {
 	fmt.Println("Ctrl+C to show the benchmark charts")
 
 	interval := time.Second / time.Duration(qps)
@@ -96,7 +113,10 @@ func (b *Bench) Run(qps int, fn func()) {
 	fmt.Printf("\n\nListening on: %s\n", addr)
 
 	go func() {
-		http.HandleFunc(defaultPath, generateChart(b.title, b.records))
+		http.HandleFunc(defaultPath, generateChart(b.records, chartConfig{
+			title:         b.title,
+			plotErrorRate: hasErr,
+		}))
 		if err := http.Serve(listener, nil); err != nil {
 			fmt.Println(err)
 		}
@@ -176,7 +196,7 @@ func (b *Bench) collect(collector <-chan Task) {
 	}
 }
 
-func (b *Bench) runLoop(fn func()) {
+func (b *Bench) runLoop(fn func() error) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 
@@ -223,13 +243,14 @@ func (b *Bench) runLoop(fn func()) {
 	}
 }
 
-func (b *Bench) runSingle(collector chan<- Task, fn func()) {
+func (b *Bench) runSingle(collector chan<- Task, fn func() error) {
 	start := timex.Now()
-	fn()
+	err := fn()
 	duration := timex.Since(start)
 	collector <- Task{
 		start:    start,
 		duration: duration,
+		err:      err,
 	}
 }
 

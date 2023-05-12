@@ -9,6 +9,7 @@ type (
 	Task struct {
 		start    time.Duration
 		duration time.Duration
+		err      error
 	}
 
 	taskHeap []Task
@@ -54,18 +55,23 @@ func topK(all []Task, k int) []Task {
 	return *h
 }
 
-func calculate(bucket []Task) Metrics {
-	var metrics Metrics
+func calculate(bucket []Task) metrics {
+	var metrics metrics
 	size := len(bucket)
 	if size == 0 {
 		return metrics
 	}
 
 	var total time.Duration
+	var numErrs int
 	for _, each := range bucket {
 		total += each.duration
+		if each.err != nil {
+			numErrs++
+		}
 	}
 	metrics.Average = total / time.Duration(size)
+	metrics.ErrorRate = float64(numErrs) / float64(size)
 
 	fiftyPercent := size >> 1
 	if fiftyPercent > 0 {
