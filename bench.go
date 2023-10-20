@@ -20,6 +20,7 @@ import (
 const (
 	defaultHost             = "localhost"
 	defaultPath             = "/"
+	defaultDuration         = time.Minute
 	minCpusToReserveForCalc = 4
 )
 
@@ -67,6 +68,7 @@ func NewBench() *Bench {
 		records:   make(map[int]metrics),
 		startTime: timex.Now(),
 		current:   timex.Now(),
+		duration:  defaultDuration,
 		quit:      make(chan struct{}),
 	}
 }
